@@ -6,8 +6,6 @@ actor HitomiImageResolver {
         case invalidGGURL
         case invalidGGResponse
         case invalidBasePath
-        case invalidMFunction
-        case invalidMDefault
         case invalidHash
         case invalidImageURL
 
@@ -19,10 +17,6 @@ actor HitomiImageResolver {
                 return "gg.js の取得または解析に失敗しました。"
             case .invalidBasePath:
                 return "gg.js からベースパスを取得できませんでした。"
-            case .invalidMFunction:
-                return "gg.m() の解析に失敗しました。"
-            case .invalidMDefault:
-                return "gg.m() のデフォルト値を取得できませんでした。"
             case .invalidHash:
                 return "画像ハッシュの形式が不正です。"
             case .invalidImageURL:
@@ -30,6 +24,7 @@ actor HitomiImageResolver {
             }
         }
     }
+
 
     // MARK: - Properties
 
@@ -41,15 +36,13 @@ actor HitomiImageResolver {
 
     private var basePath: String?
 
-    // gg.m(g) の switch 文に明示されている値を保持する
+    // gg.m(g) の switch 文を解析した結果を保持する
     // Key: gg.s(hash) の値
     // Value: gg.m(g) が返す 0 または 1
     private var ggMap: [Int: Int] = [:]
 
-    // switch に該当しない場合に gg.m(g) が返す初期値
-    private var ggDefaultValue = 0
-
     private var initialized = false
+
 
     // MARK: - Initialization
 
@@ -61,6 +54,7 @@ actor HitomiImageResolver {
 
         try await reloadGG()
     }
+
 
     // gg.js を強制的に再取得して解析する
     func reloadGG() async throws {
@@ -74,7 +68,9 @@ actor HitomiImageResolver {
         components.queryItems = [
             URLQueryItem(
                 name: "_",
-                value: String(Int(Date().timeIntervalSince1970))
+                value: String(
+                    Int(Date().timeIntervalSince1970)
+                )
             )
         ]
 
@@ -111,30 +107,21 @@ actor HitomiImageResolver {
             from: script
         )
 
-        let mFunction = try parseMFunction(
+        let parsedGGMap = parseGGMap(
             from: script
         )
 
-        let parsedDefaultValue = try parseMDefaultValue(
-            from: mFunction
-        )
-
-        let parsedGGMap = parseGGMap(
-            from: mFunction
-        )
-
         basePath = parsedBasePath
-        ggDefaultValue = parsedDefaultValue
         ggMap = parsedGGMap
         initialized = true
 
         print(
             "[Resolver] gg.js loaded:",
             "b=\(parsedBasePath)",
-            "defaultM=\(parsedDefaultValue)",
             "mappedCases=\(parsedGGMap.count)"
         )
     }
+
 
     // MARK: - Public API
 
@@ -165,6 +152,7 @@ actor HitomiImageResolver {
         return request
     }
 
+
     // 必要に応じて拡張子を指定して画像URLを生成する
     func imageURL(
         for hash: String,
@@ -176,17 +164,9 @@ actor HitomiImageResolver {
 
         let g = try ggS(hash)
 
-        // switch に明示された値があればそれを使い、
-        // それ以外は gg.m() の初期値を使用する
-        let mappedValue = ggMap[g]
-        let m = mappedValue ?? ggDefaultValue
-
-        print(
-            "[Resolver] URL:",
-            "g=\(g)",
-            "m=\(m)",
-            mappedValue == nil ? "source=default" : "source=case"
-        )
+        // gg.m(g) は case の存在有無ではなく、
+        // 各 case グループの最終的な o = 0 / o = 1 を返す
+        let m = ggMap[g] ?? 0
 
         let subdomain = 1 + m
 
@@ -202,6 +182,7 @@ actor HitomiImageResolver {
 
         return url
     }
+
 
     // MARK: - gg.js Parsing
 
@@ -233,126 +214,70 @@ actor HitomiImageResolver {
             throw ResolverError.invalidBasePath
         }
 
-        return String(script[captureRange])
+        return String(
+            script[captureRange]
+        )
     }
 
-    // gg.m(g) の関数本体だけを取り出す
-    private func parseMFunction(
-        from script: String
-    ) throws -> String {
-        let pattern =
-            #"(?s)m\s*:\s*function\s*\(\s*g\s*\)\s*\{(.*?)return\s+o\s*;"#
-
-        let regex = try NSRegularExpression(
-            pattern: pattern
-        )
-
-        let range = NSRange(
-            script.startIndex..<script.endIndex,
-            in: script
-        )
-
-        guard
-            let match = regex.firstMatch(
-                in: script,
-                range: range
-            ),
-            let captureRange = Range(
-                match.range(at: 1),
-                in: script
-            )
-        else {
-            throw ResolverError.invalidMFunction
-        }
-
-        return String(script[captureRange])
-    }
-
-    // gg.m(g) の switch に入る前の o の初期値を取得する
-    private func parseMDefaultValue(
-        from functionBody: String
-    ) throws -> Int {
-        let pattern =
-            #"(?:var|let|const)\s+o\s*=\s*([01])\s*;"#
-
-        let regex = try NSRegularExpression(
-            pattern: pattern
-        )
-
-        let range = NSRange(
-            functionBody.startIndex..<functionBody.endIndex,
-            in: functionBody
-        )
-
-        guard
-            let match = regex.firstMatch(
-                in: functionBody,
-                range: range
-            ),
-            let captureRange = Range(
-                match.range(at: 1),
-                in: functionBody
-            ),
-            let value = Int(functionBody[captureRange])
-        else {
-            throw ResolverError.invalidMDefault
-        }
-
-        return value
-    }
 
     // gg.m(g) の switch 文を解析して case -> o の対応表を作る
     private func parseGGMap(
-        from functionBody: String
+        from script: String
     ) -> [Int: Int] {
         var result: [Int: Int] = [:]
         var pendingCases: [Int] = []
 
-        let tokenPattern =
-            #"case\s+(\d+)\s*:|\bo\s*=\s*([01])\s*;"#
-
-        guard let regex = try? NSRegularExpression(
-            pattern: tokenPattern
-        ) else {
-            return result
-        }
-
-        let fullRange = NSRange(
-            functionBody.startIndex..<functionBody.endIndex,
-            in: functionBody
+        let caseRegex = try? NSRegularExpression(
+            pattern: #"case\s+(\d+)\s*:"#
         )
 
-        let matches = regex.matches(
-            in: functionBody,
-            range: fullRange
+        let assignmentRegex = try? NSRegularExpression(
+            pattern: #"\bo\s*=\s*([01])\s*;"#
         )
 
-        for match in matches {
-            // case 数値:
+        for rawLine in script.components(
+            separatedBy: .newlines
+        ) {
+            let line = rawLine as NSString
+            let fullRange = NSRange(
+                location: 0,
+                length: line.length
+            )
+
             if
-                match.range(at: 1).location != NSNotFound,
-                let range = Range(
-                    match.range(at: 1),
-                    in: functionBody
+                let caseRegex,
+                let match = caseRegex.firstMatch(
+                    in: rawLine,
+                    range: fullRange
                 ),
-                let value = Int(functionBody[range])
+                match.numberOfRanges >= 2
             {
-                pendingCases.append(value)
-                continue
+                let valueString = line.substring(
+                    with: match.range(at: 1)
+                )
+
+                if let value = Int(valueString) {
+                    pendingCases.append(value)
+                }
             }
 
-            // o = 0; または o = 1;
             if
-                match.range(at: 2).location != NSNotFound,
-                let range = Range(
-                    match.range(at: 2),
-                    in: functionBody
+                !pendingCases.isEmpty,
+                let assignmentRegex,
+                let match = assignmentRegex.firstMatch(
+                    in: rawLine,
+                    range: fullRange
                 ),
-                let value = Int(functionBody[range]),
-                !pendingCases.isEmpty
+                match.numberOfRanges >= 2
             {
-                for caseValue in pendingCases {
-                    result[caseValue] = value
+                let resultString = line.substring(
+                    with: match.range(at: 1)
+                )
+
+                if let value = Int(resultString) {
+                    for caseValue in pendingCases {
+                        result[caseValue] = value
+                    }
                 }
 
                 pendingCases.removeAll(
@@ -364,6 +289,7 @@ actor HitomiImageResolver {
         return result
     }
 
+
     // gg.s(hash) と同じ変換をSwiftで再現する
     private func ggS(
         _ hash: String
@@ -372,10 +298,20 @@ actor HitomiImageResolver {
             throw ResolverError.invalidHash
         }
 
-        let suffix = String(hash.suffix(3))
-        let firstTwo = String(suffix.prefix(2))
-        let lastOne = String(suffix.suffix(1))
-        let reordered = lastOne + firstTwo
+        let suffix = String(
+            hash.suffix(3)
+        )
+
+        let firstTwo = String(
+            suffix.prefix(2)
+        )
+
+        let lastOne = String(
+            suffix.suffix(1)
+        )
+
+        let reordered =
+            lastOne + firstTwo
 
         guard let value = Int(
             reordered,

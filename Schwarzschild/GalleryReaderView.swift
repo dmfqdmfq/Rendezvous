@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+nonisolated private func debugLog(_ message: String) {
+#if DEBUG
+    Swift.print(message)
+#endif
+}
+
+
 struct GalleryReaderView: View {
 
     @EnvironmentObject private var settings: AppSettings
@@ -35,6 +42,7 @@ struct GalleryReaderView: View {
             readerHeader
         }
         // 標準ナビゲーションバーは非表示にし、Reader専用ヘッダーを使用する
+        .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         // ナビゲーションバーを隠してもiOS標準の戻るスワイプを有効にする
         .background {
@@ -71,18 +79,20 @@ struct GalleryReaderView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            // 読み込み済みページ数を赤いゲージで表示する
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(.white.opacity(0.15))
+            // 快適モードの場合だけ全ページの事前読み込み進捗を表示する
+            if settings.preloadAllReaderImages {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Rectangle()
+                            .fill(.white.opacity(0.15))
 
-                    Rectangle()
-                        .fill(.red)
-                        .frame(width: geometry.size.width * loadingProgress)
+                        Rectangle()
+                            .fill(.red)
+                            .frame(width: geometry.size.width * loadingProgress)
+                    }
                 }
+                .frame(height: 2)
             }
-            .frame(height: 2)
         }
         .background(.black)
     }
@@ -162,7 +172,7 @@ struct GalleryReaderView: View {
         } catch is CancellationError {
             return
         } catch {
-            print("[Reader] Initialize ERROR:", error)
+            debugLog("[Reader] Initialize ERROR: \(error)")
             errorMessage = error.localizedDescription
         }
     }
@@ -183,20 +193,16 @@ struct GalleryReaderView: View {
                 let data = try await preloadDataWithRetry(for: file)
                 markLoaded(file.hash)
 
-                print(
-                    "[Reader][Preload] SUCCESS:",
-                    file.name,
-                    "Bytes=\(data.count)"
+                debugLog(
+                    "[Reader][Preload] SUCCESS: \(file.name) Bytes=\(data.count)"
                 )
             } catch is CancellationError {
                 return
             } catch let error as URLError where error.code == .cancelled {
                 return
             } catch {
-                print(
-                    "[Reader][Preload] ERROR:",
-                    file.name,
-                    error
+                debugLog(
+                    "[Reader][Preload] ERROR: \(file.name) \(error)"
                 )
             }
         }
@@ -220,10 +226,8 @@ struct GalleryReaderView: View {
 
                 let delay = UInt64(attempt) * 500_000_000
 
-                print(
-                    "[Reader][Preload] RETRY:",
-                    file.name,
-                    "\(attempt)/\(maxAttempts - 1)"
+                debugLog(
+                    "[Reader][Preload] RETRY: \(file.name) \(attempt)/\(maxAttempts - 1)"
                 )
 
                 try await Task.sleep(nanoseconds: delay)
@@ -345,10 +349,8 @@ private struct ReaderPageView: View {
 
         loadFailed = false
 
-        print(
-            "[Reader][Page \(pageNumber)]",
-            "name=\(file.name)",
-            "hasAVIF=\(file.hasAVIF ?? 0)"
+        debugLog(
+            "[Reader][Page \(pageNumber)] name=\(file.name) hasAVIF=\(file.hasAVIF ?? 0)"
         )
 
         let maxAttempts = 3
@@ -363,19 +365,17 @@ private struct ReaderPageView: View {
                 )
                 return
             } catch is CancellationError {
-                print("[Reader][Page \(pageNumber)] CANCELLED")
+                debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                 return
             } catch let error as URLError where error.code == .cancelled {
-                print("[Reader][Page \(pageNumber)] CANCELLED")
+                debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                 return
             } catch {
                 let canRetry = attempt < maxAttempts && shouldRetry(error)
 
                 if canRetry {
-                    print(
-                        "[Reader][Page \(pageNumber)] RETRY:",
-                        "\(attempt)/\(maxAttempts - 1)",
-                        error
+                    debugLog(
+                        "[Reader][Page \(pageNumber)] RETRY: \(attempt)/\(maxAttempts - 1) \(error)"
                     )
 
                     do {
@@ -383,14 +383,14 @@ private struct ReaderPageView: View {
                             nanoseconds: UInt64(attempt) * 500_000_000
                         )
                     } catch {
-                        print("[Reader][Page \(pageNumber)] CANCELLED")
+                        debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                         return
                     }
 
                     continue
                 }
 
-                print("[Reader][Page \(pageNumber)] ERROR:", error)
+                debugLog("[Reader][Page \(pageNumber)] ERROR: \(error)")
                 loadFailed = true
                 return
             }
@@ -405,8 +405,8 @@ private struct ReaderPageView: View {
             throw URLError(.badURL)
         }
 
-        print("[Reader][Page \(pageNumber)] Request:")
-        print(requestURL.absoluteString)
+        debugLog("[Reader][Page \(pageNumber)] Request:")
+        debugLog(requestURL.absoluteString)
 
         if preloadEnabled {
             // 事前読み込みと同じ通信を共有して重複ダウンロードを防ぐ
@@ -424,11 +424,8 @@ private struct ReaderPageView: View {
             forHTTPHeaderField: "Content-Type"
         ) ?? "unknown"
 
-        print(
-            "[Reader][Page \(pageNumber)]",
-            "HTTP=\(httpResponse.statusCode)",
-            "Content-Type=\(contentType)",
-            "Bytes=\(data.count)"
+        debugLog(
+            "[Reader][Page \(pageNumber)] HTTP=\(httpResponse.statusCode) Content-Type=\(contentType) Bytes=\(data.count)"
         )
 
         guard httpResponse.statusCode == 200 else {
@@ -473,7 +470,7 @@ private struct ReaderPageView: View {
     // 取得済みデータをUIImageへ変換して表示する
     private func displayImage(from data: Data, source: String) {
         guard let loadedImage = UIImage(data: data) else {
-            print("[Reader][Page \(pageNumber)] ERROR: 画像のデコードに失敗しました")
+            debugLog("[Reader][Page \(pageNumber)] ERROR: 画像のデコードに失敗しました")
             loadFailed = true
             return
         }
@@ -481,9 +478,8 @@ private struct ReaderPageView: View {
         image = loadedImage
         onLoaded()
 
-        print(
-            "[Reader][Page \(pageNumber)] \(source):",
-            "\(Int(loadedImage.size.width))x\(Int(loadedImage.size.height))"
+        debugLog(
+            "[Reader][Page \(pageNumber)] \(source): \(Int(loadedImage.size.width))x\(Int(loadedImage.size.height))"
         )
     }
 
