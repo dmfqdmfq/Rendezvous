@@ -214,8 +214,10 @@ struct GalleryReaderView: View {
 
         for attempt in 1...maxAttempts {
             do {
-                let request = try await resolver.imageRequest(for: file.hash)
-                return try await cache.loadData(for: file.hash, request: request)
+                return try await resolver.imageData(
+                    for: file.hash,
+                    cache: cache
+                )
             } catch {
                 guard
                     attempt < maxAttempts,
@@ -365,10 +367,8 @@ private struct ReaderPageView: View {
                 )
                 return
             } catch is CancellationError {
-                debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                 return
             } catch let error as URLError where error.code == .cancelled {
-                debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                 return
             } catch {
                 let canRetry = attempt < maxAttempts && shouldRetry(error)
@@ -383,7 +383,6 @@ private struct ReaderPageView: View {
                             nanoseconds: UInt64(attempt) * 500_000_000
                         )
                     } catch {
-                        debugLog("[Reader][Page \(pageNumber)] CANCELLED")
                         return
                     }
 
@@ -397,43 +396,12 @@ private struct ReaderPageView: View {
         }
     }
 
-    // 設定に応じて共有キャッシュまたは直接通信から画像データを取得する
+    // 通常表示と事前読み込みの両方で同じ404復旧処理と共有キャッシュを使用する
     private func fetchImageData() async throws -> Data {
-        let request = try await resolver.imageRequest(for: file.hash)
-
-        guard let requestURL = request.url else {
-            throw URLError(.badURL)
-        }
-
-        debugLog("[Reader][Page \(pageNumber)] Request:")
-        debugLog(requestURL.absoluteString)
-
-        if preloadEnabled {
-            // 事前読み込みと同じ通信を共有して重複ダウンロードを防ぐ
-            return try await cache.loadData(for: file.hash, request: request)
-        }
-
-        // データ節約モードでは表示が必要なページだけを取得する
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw ReaderImageCache.CacheError.invalidHTTPResponse
-        }
-
-        let contentType = httpResponse.value(
-            forHTTPHeaderField: "Content-Type"
-        ) ?? "unknown"
-
-        debugLog(
-            "[Reader][Page \(pageNumber)] HTTP=\(httpResponse.statusCode) Content-Type=\(contentType) Bytes=\(data.count)"
+        try await resolver.imageData(
+            for: file.hash,
+            cache: cache
         )
-
-        guard httpResponse.statusCode == 200 else {
-            throw ReaderImageCache.CacheError.httpError(httpResponse.statusCode)
-        }
-
-        await cache.store(data, for: file.hash)
-        return data
     }
 
     // 一時的な通信障害だけを自動再試行する

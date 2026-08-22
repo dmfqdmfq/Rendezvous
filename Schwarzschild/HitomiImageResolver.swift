@@ -1,11 +1,20 @@
 import Foundation
 
+nonisolated private func debugLog(_ message: String) {
+#if DEBUG
+    Swift.print(message)
+#endif
+}
+
+
 actor HitomiImageResolver {
 
     enum ResolverError: LocalizedError {
         case invalidGGURL
         case invalidGGResponse
         case invalidBasePath
+        case invalidMFunction
+        case invalidMDefault
         case invalidHash
         case invalidImageURL
 
@@ -17,6 +26,10 @@ actor HitomiImageResolver {
                 return "gg.js の取得または解析に失敗しました。"
             case .invalidBasePath:
                 return "gg.js からベースパスを取得できませんでした。"
+            case .invalidMFunction:
+                return "gg.m() の解析に失敗しました。"
+            case .invalidMDefault:
+                return "gg.m() のデフォルト値を取得できませんでした。"
             case .invalidHash:
                 return "画像ハッシュの形式が不正です。"
             case .invalidImageURL:
@@ -24,7 +37,6 @@ actor HitomiImageResolver {
             }
         }
     }
-
 
     // MARK: - Properties
 
@@ -36,13 +48,18 @@ actor HitomiImageResolver {
 
     private var basePath: String?
 
-    // gg.m(g) の switch 文を解析した結果を保持する
+    // gg.m(g) の switch 文に明示されている値を保持する
     // Key: gg.s(hash) の値
     // Value: gg.m(g) が返す 0 または 1
     private var ggMap: [Int: Int] = [:]
 
+    // switch に該当しない場合に gg.m(g) が返す初期値
+    private var ggDefaultValue = 0
+
     private var initialized = false
 
+    // gg.js が更新されるたびに増加し、同時発生した404で重複更新しないために使用する
+    private var ggRevision = 0
 
     // MARK: - Initialization
 
@@ -54,7 +71,6 @@ actor HitomiImageResolver {
 
         try await reloadGG()
     }
-
 
     // gg.js を強制的に再取得して解析する
     func reloadGG() async throws {
@@ -68,9 +84,7 @@ actor HitomiImageResolver {
         components.queryItems = [
             URLQueryItem(
                 name: "_",
-                value: String(
-                    Int(Date().timeIntervalSince1970)
-                )
+                value: UUID().uuidString
             )
         ]
 
@@ -86,6 +100,14 @@ actor HitomiImageResolver {
         request.setValue(
             "https://hitomi.la/",
             forHTTPHeaderField: "Referer"
+        )
+        request.setValue(
+            "no-cache, no-store, max-age=0",
+            forHTTPHeaderField: "Cache-Control"
+        )
+        request.setValue(
+            "no-cache",
+            forHTTPHeaderField: "Pragma"
         )
 
         let (data, response) = try await URLSession.shared.data(
@@ -107,21 +129,28 @@ actor HitomiImageResolver {
             from: script
         )
 
-        let parsedGGMap = parseGGMap(
+        let mFunction = try parseMFunction(
             from: script
         )
 
+        let parsedDefaultValue = try parseMDefaultValue(
+            from: mFunction
+        )
+
+        let parsedGGMap = parseGGMap(
+            from: mFunction
+        )
+
         basePath = parsedBasePath
+        ggDefaultValue = parsedDefaultValue
         ggMap = parsedGGMap
         initialized = true
+        ggRevision += 1
 
-        print(
-            "[Resolver] gg.js loaded:",
-            "b=\(parsedBasePath)",
-            "mappedCases=\(parsedGGMap.count)"
+        debugLog(
+            "[Resolver] gg.js loaded: b=\(parsedBasePath) defaultM=\(parsedDefaultValue) mappedCases=\(parsedGGMap.count)"
         )
     }
-
 
     // MARK: - Public API
 
@@ -133,9 +162,110 @@ actor HitomiImageResolver {
             try await initialize()
         }
 
-        let url = try imageURL(
+        return try makeImageRequest(
             for: hash,
-            fileExtension: "avif"
+            alternateSubdomain: false
+        )
+    }
+
+    // 404が発生した場合はgg.jsを更新し、それでも失敗する場合は反対側のCDNを試す
+    func imageData(
+        for hash: String,
+        cache: ReaderImageCache
+    ) async throws -> Data {
+        if let cachedData = await cache.data(for: hash) {
+            return cachedData
+        }
+
+        if !initialized {
+            try await initialize()
+        }
+
+        let requestRevision = ggRevision
+        let primaryRequest = try makeImageRequest(
+            for: hash,
+            alternateSubdomain: false
+        )
+
+        do {
+            return try await cache.loadData(
+                for: hash,
+                request: primaryRequest
+            )
+        } catch {
+            guard isNotFound(error) else {
+                throw error
+            }
+        }
+
+        debugLog(
+            "[Resolver] HTTP 404 detected. Refreshing gg.js before retry."
+        )
+
+        // 別のページが先にgg.jsを更新していた場合は重複して取得しない
+        if ggRevision == requestRevision {
+            do {
+                try await reloadGG()
+            } catch {
+                // gg.js の更新に失敗しても、現在の情報で反対側CDNを試す
+                debugLog(
+                    "[Resolver] gg.js refresh failed: \(error)"
+                )
+            }
+        }
+
+        let refreshedPrimaryRequest = try makeImageRequest(
+            for: hash,
+            alternateSubdomain: false
+        )
+
+        do {
+            return try await cache.loadData(
+                for: hash,
+                request: refreshedPrimaryRequest
+            )
+        } catch {
+            guard isNotFound(error) else {
+                throw error
+            }
+        }
+
+        debugLog(
+            "[Resolver] Refreshed primary CDN returned 404. Trying alternate CDN."
+        )
+
+        let alternateRequest = try makeImageRequest(
+            for: hash,
+            alternateSubdomain: true
+        )
+
+        return try await cache.loadData(
+            for: hash,
+            request: alternateRequest
+        )
+    }
+
+    // 必要に応じて拡張子を指定して画像URLを生成する
+    func imageURL(
+        for hash: String,
+        fileExtension: String = "avif"
+    ) throws -> URL {
+        try makeImageURL(
+            for: hash,
+            fileExtension: fileExtension,
+            alternateSubdomain: false
+        )
+    }
+
+    // 現在のgg.js情報を使って画像リクエストを生成する
+    private func makeImageRequest(
+        for hash: String,
+        alternateSubdomain: Bool
+    ) throws -> URLRequest {
+        let url = try makeImageURL(
+            for: hash,
+            fileExtension: "avif",
+            alternateSubdomain: alternateSubdomain
         )
 
         var request = URLRequest(
@@ -152,11 +282,11 @@ actor HitomiImageResolver {
         return request
     }
 
-
-    // 必要に応じて拡張子を指定して画像URLを生成する
-    func imageURL(
+    // gg.m(g) の結果から通常CDNまたは反対側CDNのURLを生成する
+    private func makeImageURL(
         for hash: String,
-        fileExtension: String = "avif"
+        fileExtension: String,
+        alternateSubdomain: Bool
     ) throws -> URL {
         guard let basePath else {
             throw ResolverError.invalidBasePath
@@ -164,11 +294,20 @@ actor HitomiImageResolver {
 
         let g = try ggS(hash)
 
-        // gg.m(g) は case の存在有無ではなく、
-        // 各 case グループの最終的な o = 0 / o = 1 を返す
-        let m = ggMap[g] ?? 0
+        // switch に明示された値があればそれを使い、
+        // それ以外は gg.m() の初期値を使用する
+        let mappedValue = ggMap[g]
+        let m = mappedValue ?? ggDefaultValue
+        let selectedM = alternateSubdomain ? 1 - m : m
 
-        let subdomain = 1 + m
+        let source = mappedValue == nil ? "default" : "case"
+        let mode = alternateSubdomain ? "alternate" : "primary"
+
+        debugLog(
+            "[Resolver] URL: g=\(g) m=\(selectedM) source=\(source) mode=\(mode)"
+        )
+
+        let subdomain = 1 + selectedM
 
         let urlString =
             "https://a\(subdomain).\(imageDomain)/" +
@@ -183,6 +322,22 @@ actor HitomiImageResolver {
         return url
     }
 
+    // ReaderImageCache が返したHTTP 404だけを判定する
+    private func isNotFound(
+        _ error: Error
+    ) -> Bool {
+        guard
+            let cacheError = error as? ReaderImageCache.CacheError
+        else {
+            return false
+        }
+
+        if case .httpError(let statusCode) = cacheError {
+            return statusCode == 404
+        }
+
+        return false
+    }
 
     // MARK: - gg.js Parsing
 
@@ -214,70 +369,126 @@ actor HitomiImageResolver {
             throw ResolverError.invalidBasePath
         }
 
-        return String(
-            script[captureRange]
-        )
+        return String(script[captureRange])
     }
 
+    // gg.m(g) の関数本体だけを取り出す
+    private func parseMFunction(
+        from script: String
+    ) throws -> String {
+        let pattern =
+            #"(?s)m\s*:\s*function\s*\(\s*g\s*\)\s*\{(.*?)return\s+o\s*;"#
+
+        let regex = try NSRegularExpression(
+            pattern: pattern
+        )
+
+        let range = NSRange(
+            script.startIndex..<script.endIndex,
+            in: script
+        )
+
+        guard
+            let match = regex.firstMatch(
+                in: script,
+                range: range
+            ),
+            let captureRange = Range(
+                match.range(at: 1),
+                in: script
+            )
+        else {
+            throw ResolverError.invalidMFunction
+        }
+
+        return String(script[captureRange])
+    }
+
+    // gg.m(g) の switch に入る前の o の初期値を取得する
+    private func parseMDefaultValue(
+        from functionBody: String
+    ) throws -> Int {
+        let pattern =
+            #"(?:var|let|const)\s+o\s*=\s*([01])\s*;"#
+
+        let regex = try NSRegularExpression(
+            pattern: pattern
+        )
+
+        let range = NSRange(
+            functionBody.startIndex..<functionBody.endIndex,
+            in: functionBody
+        )
+
+        guard
+            let match = regex.firstMatch(
+                in: functionBody,
+                range: range
+            ),
+            let captureRange = Range(
+                match.range(at: 1),
+                in: functionBody
+            ),
+            let value = Int(functionBody[captureRange])
+        else {
+            throw ResolverError.invalidMDefault
+        }
+
+        return value
+    }
 
     // gg.m(g) の switch 文を解析して case -> o の対応表を作る
     private func parseGGMap(
-        from script: String
+        from functionBody: String
     ) -> [Int: Int] {
         var result: [Int: Int] = [:]
         var pendingCases: [Int] = []
 
-        let caseRegex = try? NSRegularExpression(
-            pattern: #"case\s+(\d+)\s*:"#
+        let tokenPattern =
+            #"case\s+(\d+)\s*:|\bo\s*=\s*([01])\s*;"#
+
+        guard let regex = try? NSRegularExpression(
+            pattern: tokenPattern
+        ) else {
+            return result
+        }
+
+        let fullRange = NSRange(
+            functionBody.startIndex..<functionBody.endIndex,
+            in: functionBody
         )
 
-        let assignmentRegex = try? NSRegularExpression(
-            pattern: #"\bo\s*=\s*([01])\s*;"#
+        let matches = regex.matches(
+            in: functionBody,
+            range: fullRange
         )
 
-        for rawLine in script.components(
-            separatedBy: .newlines
-        ) {
-            let line = rawLine as NSString
-            let fullRange = NSRange(
-                location: 0,
-                length: line.length
-            )
-
+        for match in matches {
+            // case 数値:
             if
-                let caseRegex,
-                let match = caseRegex.firstMatch(
-                    in: rawLine,
-                    range: fullRange
+                match.range(at: 1).location != NSNotFound,
+                let range = Range(
+                    match.range(at: 1),
+                    in: functionBody
                 ),
-                match.numberOfRanges >= 2
+                let value = Int(functionBody[range])
             {
-                let valueString = line.substring(
-                    with: match.range(at: 1)
-                )
-
-                if let value = Int(valueString) {
-                    pendingCases.append(value)
-                }
+                pendingCases.append(value)
+                continue
             }
 
+            // o = 0; または o = 1;
             if
-                !pendingCases.isEmpty,
-                let assignmentRegex,
-                let match = assignmentRegex.firstMatch(
-                    in: rawLine,
-                    range: fullRange
+                match.range(at: 2).location != NSNotFound,
+                let range = Range(
+                    match.range(at: 2),
+                    in: functionBody
                 ),
-                match.numberOfRanges >= 2
+                let value = Int(functionBody[range]),
+                !pendingCases.isEmpty
             {
-                let resultString = line.substring(
-                    with: match.range(at: 1)
-                )
-
-                if let value = Int(resultString) {
-                    for caseValue in pendingCases {
-                        result[caseValue] = value
-                    }
+                for caseValue in pendingCases {
+                    result[caseValue] = value
                 }
 
                 pendingCases.removeAll(
@@ -289,7 +500,6 @@ actor HitomiImageResolver {
         return result
     }
 
-
     // gg.s(hash) と同じ変換をSwiftで再現する
     private func ggS(
         _ hash: String
@@ -298,20 +508,10 @@ actor HitomiImageResolver {
             throw ResolverError.invalidHash
         }
 
-        let suffix = String(
-            hash.suffix(3)
-        )
-
-        let firstTwo = String(
-            suffix.prefix(2)
-        )
-
-        let lastOne = String(
-            suffix.suffix(1)
-        )
-
-        let reordered =
-            lastOne + firstTwo
+        let suffix = String(hash.suffix(3))
+        let firstTwo = String(suffix.prefix(2))
+        let lastOne = String(suffix.suffix(1))
+        let reordered = lastOne + firstTwo
 
         guard let value = Int(
             reordered,
