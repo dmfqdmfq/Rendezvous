@@ -52,6 +52,7 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
             return "読む"
         }
     }
+    
 }
 
 // MARK: - App Settings
@@ -59,11 +60,20 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
 @MainActor
 final class AppSettings: ObservableObject {
 
+    
     private enum Keys {
         static let galleryLanguage = "galleryLanguage"
     }
 
-
+    // Readerで全ページを事前に読み込むかどうか
+    @Published var preloadAllReaderImages: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                preloadAllReaderImages,
+                forKey: "preloadAllReaderImages"
+            )
+        }
+    }
     // 初期値は韓国語にする
     @Published var galleryLanguage: GalleryLanguage {
         didSet {
@@ -75,6 +85,9 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
+        preloadAllReaderImages = UserDefaults.standard.bool(
+                forKey: "preloadAllReaderImages"
+            )
         // 保存済みの言語設定がある場合は、その設定を優先する
         if let storedValue = UserDefaults.standard.string(
             forKey: Keys.galleryLanguage

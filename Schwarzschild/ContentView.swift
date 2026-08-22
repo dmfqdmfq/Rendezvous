@@ -1,18 +1,36 @@
 import SwiftUI
 
 struct ContentView: View {
-    
+
     @EnvironmentObject private var settings: AppSettings
     @StateObject private var viewModel = GalleryListViewModel()
 
     var body: some View {
+        Group {
+            if viewModel.isLoading && viewModel.galleries.isEmpty {
+                // 初回読み込み中はナビゲーションUIを表示しない
+                StartupLoadingView()
+            } else {
+                mainView
+            }
+        }
+        .task(id: settings.galleryLanguage.rawValue) {
+            // 言語設定に対応するギャラリー一覧を読み込む
+            await viewModel.load(
+                language: settings.galleryLanguage,
+                page: 1
+            )
+        }
+    }
+
+    // MARK: - Main View
+
+    private var mainView: some View {
         NavigationStack {
             Group {
-                if viewModel.isLoading && viewModel.galleries.isEmpty {
-                    StartupLoadingView()
-                } else if let errorMessage = viewModel.errorMessage {
+                if let errorMessage = viewModel.errorMessage {
                     ContentUnavailableView(
-                        "読み込みエラー",
+                        loadErrorTitle,
                         systemImage: "exclamationmark.triangle",
                         description: Text(errorMessage)
                     )
@@ -32,29 +50,8 @@ struct ContentView: View {
                 }
             }
         }
-        .task(id: settings.galleryLanguage.rawValue) {
-            // 言語設定が変更された場合、対応するギャラリー一覧を再読み込みする
-            await viewModel.load(
-                language: settings.galleryLanguage,
-                page: 1
-            )
-        }
     }
 
-    // 設定ボタンのアクセシビリティ用タイトル
-    private var settingsTitle: String {
-        switch settings.galleryLanguage {
-        case .korean:
-            return "설정"
-
-        case .english:
-            return "Settings"
-
-        case .japanese:
-            return "設定"
-        }
-    }
-    
     // MARK: - Gallery List
 
     private var galleryList: some View {
@@ -76,6 +73,30 @@ struct ContentView: View {
             .padding()
         }
     }
+
+    // MARK: - Localized Text
+
+    private var settingsTitle: String {
+        switch settings.galleryLanguage {
+        case .korean:
+            return "설정"
+        case .english:
+            return "Settings"
+        case .japanese:
+            return "設定"
+        }
+    }
+
+    private var loadErrorTitle: String {
+        switch settings.galleryLanguage {
+        case .korean:
+            return "불러오기 오류"
+        case .english:
+            return "Loading Error"
+        case .japanese:
+            return "読み込みエラー"
+        }
+    }
 }
 
 // MARK: - Gallery Card
@@ -87,7 +108,7 @@ struct GalleryCardView: View {
     var body: some View {
         HStack(spacing: 14) {
 
-            // サムネイル画像は次の段階で追加する
+            // 最初のページをサムネイルとして表示する
             if let firstFile = gallery.files.first {
                 HitomiThumbnailView(
                     hash: firstFile.hash
@@ -146,6 +167,5 @@ struct GalleryCardView: View {
 
 #Preview {
     ContentView()
-    // PreviewでもAppSettingsをEnvironmentObjectとして渡す
-    .environmentObject(AppSettings())
+        .environmentObject(AppSettings())
 }
