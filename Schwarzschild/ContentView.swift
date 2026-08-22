@@ -15,7 +15,7 @@ struct ContentView: View {
             }
         }
         .task(id: settings.galleryLanguage.rawValue) {
-            // 言語設定に対応するギャラリー一覧を読み込む
+            // 言語が変わった場合は1ページ目から読み直す
             await viewModel.load(
                 language: settings.galleryLanguage,
                 page: 1
@@ -28,7 +28,8 @@ struct ContentView: View {
     private var mainView: some View {
         NavigationStack {
             Group {
-                if let errorMessage = viewModel.errorMessage {
+                if let errorMessage = viewModel.errorMessage,
+                   viewModel.galleries.isEmpty {
                     ContentUnavailableView(
                         loadErrorTitle,
                         systemImage: "exclamationmark.triangle",
@@ -57,24 +58,42 @@ struct ContentView: View {
     private var galleryList: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(viewModel.galleries) { gallery in
+                ForEach(
+                    Array(viewModel.galleries.enumerated()),
+                    id: \.element.id
+                ) { index, gallery in
                     NavigationLink {
-                        GalleryDetailView(
-                            gallery: gallery
-                        )
+                        GalleryDetailView(gallery: gallery)
                     } label: {
-                        GalleryCardView(
-                            gallery: gallery
-                        )
+                        GalleryCardView(gallery: gallery)
                     }
                     .buttonStyle(.plain)
+                    .onAppear {
+                        // セルのライフサイクルに依存する.taskは使用せず、
+                        // ViewModel側で独立して次ページの先読みを管理する
+                        viewModel.requestNextPageIfNeeded(
+                            currentIndex: index,
+                            language: settings.galleryLanguage
+                        )
+                    }
+                }
+
+                if viewModel.isLoadingMore {
+                    ProgressView()
+                        .padding(.vertical, 18)
                 }
             }
             .padding()
         }
+        .refreshable {
+            // 一覧を残したまま最新の1ページ目へ更新する
+            await viewModel.refresh(
+                language: settings.galleryLanguage
+            )
+        }
     }
 
-    // MARK: - Localized Text
+    // MARK: - Localization
 
     private var settingsTitle: String {
         switch settings.galleryLanguage {
@@ -103,27 +122,22 @@ struct ContentView: View {
 
 struct GalleryCardView: View {
 
+    @EnvironmentObject private var settings: AppSettings
+
     let gallery: GalleryInfo
 
     var body: some View {
         HStack(spacing: 14) {
-
             // 最初のページをサムネイルとして表示する
             if let firstFile = gallery.files.first {
-                HitomiThumbnailView(
-                    hash: firstFile.hash
-                )
+                HitomiThumbnailView(hash: firstFile.hash)
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.gray.opacity(0.2))
-                    .frame(
-                        width: 90,
-                        height: 125
-                    )
+                    .frame(width: 90, height: 125)
             }
 
             VStack(alignment: .leading, spacing: 7) {
-
                 Text(gallery.title)
                     .font(.headline)
                     .lineLimit(3)
@@ -142,7 +156,7 @@ struct GalleryCardView: View {
 
                     Spacer()
 
-                    Text("\(gallery.files.count) pages")
+                    Text(pageCountText)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -161,6 +175,17 @@ struct GalleryCardView: View {
                     radius: 4,
                     y: 2
                 )
+        }
+    }
+
+    private var pageCountText: String {
+        switch settings.galleryLanguage {
+        case .korean:
+            return "\(gallery.files.count) 페이지"
+        case .english:
+            return "\(gallery.files.count) pages"
+        case .japanese:
+            return "\(gallery.files.count) ページ"
         }
     }
 }
