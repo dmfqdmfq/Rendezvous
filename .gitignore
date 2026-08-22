@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific data
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode build data
+DerivedData/
+build/
+
+# Swift Package Manager user data
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
