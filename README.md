@@ -30,7 +30,7 @@ A native iOS client for browsing and reading content from Hitomi.la.
 Screenshots will be added before the first release.
 
 ## Installation
-(Prebuilt IPA files are not currently available)
+(Prebuilt IPA files are currently not available.)
 
 1. Clone this repository.
 2. Open the Xcode project.
