@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct SchwarzschildApp: App {
+struct RendezvousApp: App {
 
     @StateObject private var settings = AppSettings()
 

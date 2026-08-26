@@ -12,6 +12,12 @@ struct GalleryReaderView: View {
 
     @EnvironmentObject private var settings: AppSettings
 
+    @AppStorage("readerViewMode")
+    private var readerViewModeRawValue = ReaderViewMode.basicSlide.rawValue
+
+    @AppStorage("bookReadingDirection")
+    private var bookReadingDirectionRawValue = BookReadingDirection.japanese.rawValue
+
     let gallery: GalleryInfo
 
     @State private var resolver = HitomiImageResolver()
@@ -119,7 +125,31 @@ struct GalleryReaderView: View {
 
     // MARK: - Reader
 
+    @ViewBuilder
     private var reader: some View {
+        switch readerViewMode {
+        case .basicSlide:
+            verticalReader
+
+        case .book:
+            pagedReader
+        }
+    }
+
+    private var readerViewMode: ReaderViewMode {
+        ReaderViewMode(
+            rawValue: readerViewModeRawValue
+        ) ?? .basicSlide
+    }
+
+    private var bookReadingDirection: BookReadingDirection {
+        BookReadingDirection(
+            rawValue: bookReadingDirectionRawValue
+        ) ?? .japanese
+    }
+
+    // 従来の縦スクロール方式
+    private var verticalReader: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
                 ForEach(Array(gallery.files.enumerated()), id: \.offset) { index, file in
@@ -147,9 +177,165 @@ struct GalleryReaderView: View {
         .background(.black)
         .onAppear {
             if currentPageID == nil {
-                currentPageID = 1
+                currentPageID = currentPage
             }
         }
+    }
+
+    // 本読みモードでは1ページずつ表示する
+    private var pagedReader: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+
+                if let page = currentPagedFile {
+                    ReaderPageView(
+                        pageNumber: currentPage,
+                        totalPages: gallery.files.count,
+                        file: page,
+                        resolver: resolver,
+                        cache: cache,
+                        preloadEnabled: settings.preloadAllReaderImages
+                    ) {
+                        markLoaded(page.hash)
+                    }
+                    .id(currentPage)
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity
+                    )
+                }
+
+                HStack(spacing: 0) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: geometry.size.width * 0.42)
+                        .onTapGesture {
+                            handlePagedTap(isLeftSide: true)
+                        }
+
+                    Spacer(minLength: 0)
+
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .frame(width: geometry.size.width * 0.42)
+                        .onTapGesture {
+                            handlePagedTap(isLeftSide: false)
+                        }
+                }
+            }
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        handlePagedSwipe(
+                            value,
+                            viewWidth: geometry.size.width
+                        )
+                    }
+            )
+        }
+        .background(.black)
+        .onAppear {
+            currentPage = min(
+                max(currentPage, 1),
+                max(gallery.files.count, 1)
+            )
+        }
+    }
+
+    private var currentPagedFile: GalleryFile? {
+        let index = currentPage - 1
+
+        guard gallery.files.indices.contains(index) else {
+            return nil
+        }
+
+        return gallery.files[index]
+    }
+
+    // 本読みモードの左右タップをページ送りへ変換する
+    private func handlePagedTap(
+        isLeftSide: Bool
+    ) {
+        switch bookReadingDirection {
+        case .japanese:
+            if isLeftSide {
+                goToNextPage()
+            } else {
+                goToPreviousPage()
+            }
+
+        case .standard:
+            if isLeftSide {
+                goToPreviousPage()
+            } else {
+                goToNextPage()
+            }
+        }
+    }
+
+    // 本読みモードの左右スワイプをページ送りへ変換する
+    private func handlePagedSwipe(
+        _ value: DragGesture.Value,
+        viewWidth: CGFloat
+    ) {
+        let horizontal = value.translation.width
+        let vertical = value.translation.height
+
+        guard abs(horizontal) > abs(vertical) else {
+            return
+        }
+
+        let threshold = max(
+            60,
+            viewWidth * 0.15
+        )
+
+        guard abs(horizontal) >= threshold else {
+            return
+        }
+
+        // 左端から始まる右スワイプはiOS標準の戻る操作へ譲る
+        if value.startLocation.x <= 32,
+           horizontal > 0 {
+            return
+        }
+
+        switch bookReadingDirection {
+        case .japanese:
+            if horizontal > 0 {
+                goToNextPage()
+            } else {
+                goToPreviousPage()
+            }
+
+        case .standard:
+            if horizontal < 0 {
+                goToNextPage()
+            } else {
+                goToPreviousPage()
+            }
+        }
+    }
+
+    private func goToNextPage() {
+        guard currentPage < gallery.files.count else {
+            return
+        }
+
+        currentPage += 1
+        currentPageID = currentPage
+    }
+
+    private func goToPreviousPage() {
+        guard currentPage > 1 else {
+            return
+        }
+
+        currentPage -= 1
+        currentPageID = currentPage
     }
 
     // MARK: - Initialization

@@ -1,4 +1,4 @@
-# Schwarzschild
+# Rendezvous
 
 A native iOS client for browsing and reading content from Hitomi.la.
 
@@ -39,12 +39,12 @@ Screenshots will be added before the first release.
 
 ## Notes
 
-Schwarzschild retrieves gallery metadata and images from third-party services at runtime.  
+Rendezvous retrieves gallery metadata and images from third-party services at runtime.  
 Network behavior and availability may change if those services modify their endpoints or delivery logic.
 
 ## Disclaimer
 
-Schwarzschild is an independent, unofficial project and is not affiliated with, endorsed by, or operated by Hitomi.la.
+Rendezvous is an independent, unofficial project and is not affiliated with, endorsed by, or operated by Hitomi.la.
 
 This application does not host gallery content. Content is retrieved from third-party services, and users are responsible for complying with applicable laws, terms, and regulations.
 

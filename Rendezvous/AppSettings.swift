@@ -32,10 +32,10 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
     var appTitle: String {
         switch self {
         case .japanese:
-            return "シュヴァルツシルト"
+            return "ランデブー"
 
         case .korean, .english:
-            return "Schwarzschild"
+            return "Rendezvous"
         }
     }
 
