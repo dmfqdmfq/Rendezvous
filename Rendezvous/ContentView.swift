@@ -97,23 +97,23 @@ struct ContentView: View {
 
     private var settingsTitle: String {
         switch settings.galleryLanguage {
-        case .korean:
-            return "설정"
         case .english:
             return "Settings"
         case .japanese:
             return "設定"
+        case .korean:
+            return "설정"
         }
     }
 
     private var loadErrorTitle: String {
         switch settings.galleryLanguage {
-        case .korean:
-            return "불러오기 오류"
         case .english:
             return "Loading Error"
         case .japanese:
             return "読み込みエラー"
+        case .korean:
+            return "불러오기 오류"
         }
     }
 }
@@ -180,12 +180,12 @@ struct GalleryCardView: View {
 
     private var pageCountText: String {
         switch settings.galleryLanguage {
-        case .korean:
-            return "\(gallery.files.count) 페이지"
         case .english:
             return "\(gallery.files.count) pages"
         case .japanese:
             return "\(gallery.files.count) ページ"
+        case .korean:
+            return "\(gallery.files.count) 페이지"
         }
     }
 }

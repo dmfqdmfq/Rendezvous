@@ -17,14 +17,13 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
     // 設定画面に表示する言語名
     var displayName: String {
         switch self {
+        case .english:
+            return "English"
+        case .japanese:
+            return "日本語"
         case .korean:
             return "한국어"
 
-        case .english:
-            return "English"
-
-        case .japanese:
-            return "日本語"
         }
     }
 
@@ -42,14 +41,15 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
     // Readerへ移動するボタンの表示名
     var readButtonTitle: String {
         switch self {
-        case .korean:
-            return "읽기"
 
         case .english:
             return "Read"
 
         case .japanese:
             return "読む"
+            
+        case .korean:
+            return "읽기"
         }
     }
     
@@ -102,14 +102,12 @@ final class AppSettings: ObservableObject {
         let preferredLanguage =
             Locale.preferredLanguages.first ?? "en"
 
-        if preferredLanguage.hasPrefix("ko") {
-            // iPhoneが韓国語の場合
-            galleryLanguage = .korean
-
-        } else if preferredLanguage.hasPrefix("ja") {
+        if preferredLanguage.hasPrefix("ja") {
             // iPhoneが日本語の場合
             galleryLanguage = .japanese
-
+        } else if preferredLanguage.hasPrefix("ko") {
+            // iPhoneが韓国語の場合
+            galleryLanguage = .korean
         } else {
             // その他の言語の場合は英語を使用する
             galleryLanguage = .english
