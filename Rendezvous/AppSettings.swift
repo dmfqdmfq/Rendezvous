@@ -6,9 +6,9 @@ import Combine
 
 enum GalleryLanguage: String, CaseIterable, Identifiable {
 
-    case korean
     case english
     case japanese
+    case korean
 
     var id: String {
         rawValue
@@ -55,6 +55,26 @@ enum GalleryLanguage: String, CaseIterable, Identifiable {
     
 }
 
+// MARK: - Reader設定
+
+enum ReaderViewMode: String, CaseIterable, Identifiable {
+    case basicSlide
+    case book
+
+    var id: String {
+        rawValue
+    }
+}
+
+enum BookReadingDirection: String, CaseIterable, Identifiable {
+    case japanese
+    case standard
+
+    var id: String {
+        rawValue
+    }
+}
+
 // MARK: - App Settings
 
 @MainActor
@@ -74,7 +94,7 @@ final class AppSettings: ObservableObject {
             )
         }
     }
-    // 初期値は韓国語にする
+    // ギャラリー言語の設定を保持する
     @Published var galleryLanguage: GalleryLanguage {
         didSet {
             UserDefaults.standard.set(

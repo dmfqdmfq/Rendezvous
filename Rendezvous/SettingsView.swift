@@ -1,23 +1,5 @@
 import SwiftUI
 
-enum ReaderViewMode: String, CaseIterable, Identifiable {
-    case basicSlide
-    case book
-
-    var id: String {
-        rawValue
-    }
-}
-
-enum BookReadingDirection: String, CaseIterable, Identifiable {
-    case japanese
-    case standard
-
-    var id: String {
-        rawValue
-    }
-}
-
 struct SettingsView: View {
 
     @EnvironmentObject private var settings: AppSettings

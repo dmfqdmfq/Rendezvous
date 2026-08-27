@@ -33,7 +33,7 @@ struct GalleryReaderView: View {
         Group {
             if let errorMessage {
                 ContentUnavailableView(
-                    "読み込みエラー",
+                    readerLoadingErrorTitle,
                     systemImage: "exclamationmark.triangle",
                     description: Text(errorMessage)
                 )
@@ -120,6 +120,17 @@ struct GalleryReaderView: View {
 
             ProgressView()
                 .tint(.white)
+        }
+    }
+
+    private var readerLoadingErrorTitle: String {
+        switch settings.galleryLanguage {
+        case .english:
+            return "Loading Error"
+        case .japanese:
+            return "読み込みエラー"
+        case .korean:
+            return "불러오기 오류"
         }
     }
 

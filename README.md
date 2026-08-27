@@ -13,7 +13,9 @@ A native iOS client for browsing and reading content from Hitomi.la.
 - Infinite scrolling gallery list
 - Pull to refresh
 - Gallery detail view
-- Native vertical reader
+- Two reader view modes
+  - **Basic Slide** — reads galleries with vertical scrolling
+  - **Book Reading** — displays one page at a time with Japanese and standard page directions
 - Current page indicator
 - Reader image caching
 - Automatic retry for transient image loading failures
@@ -49,6 +51,5 @@ Rendezvous is an independent, unofficial project and is not affiliated with, end
 This application does not host gallery content. Content is retrieved from third-party services, and users are responsible for complying with applicable laws, terms, and regulations.
 
 ## License
-
 
 
