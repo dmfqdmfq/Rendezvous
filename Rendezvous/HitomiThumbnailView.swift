@@ -2,11 +2,39 @@ import SwiftUI
 import UIKit
 
 struct HitomiThumbnailView: View {
+    enum Kind {
+        case galleryCover
+        case page
+
+        var directory: String {
+            switch self {
+            case .galleryCover:
+                return "avifsmallbigtn"
+            case .page:
+                return "avifsmalltn"
+            }
+        }
+    }
 
     let hash: String
+    let kind: Kind
+    let width: CGFloat?
+    let height: CGFloat
 
     @State private var image: UIImage?
     @State private var loadFailed = false
+
+    init(
+        hash: String,
+        kind: Kind = .galleryCover,
+        width: CGFloat? = 90,
+        height: CGFloat = 125
+    ) {
+        self.hash = hash
+        self.kind = kind
+        self.width = width
+        self.height = height
+    }
 
     var body: some View {
         Group {
@@ -25,9 +53,10 @@ struct HitomiThumbnailView: View {
             }
         }
         .frame(
-            width: 90,
-            height: 125
+            width: width,
+            height: height
         )
+        .frame(maxWidth: width == nil ? .infinity : nil)
         .background(.gray.opacity(0.15))
         .clipShape(
             RoundedRectangle(cornerRadius: 8)
@@ -111,7 +140,7 @@ struct HitomiThumbnailView: View {
         // /3/7b/{hash}.avif となる
         let urlString =
             "https://atn.gold-usergeneratedcontent.net/" +
-            "avifsmallbigtn/" +
+            "\(kind.directory)/" +
             "\(lastCharacter)/\(lastTwo)/" +
             "\(hash).avif"
 

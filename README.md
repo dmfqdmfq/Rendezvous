@@ -11,8 +11,19 @@ A native iOS client for browsing and reading content from Hitomi.la.
   - 日本語
   - 한국어
 - Infinite scrolling gallery list
+- Full color-coded tag list on every gallery card
 - Pull to refresh
+- Tap a gallery to open the reader, or touch and hold to view its details
+- Search by title, tag, or exact gallery ID
+  - Add color-coded tag suggestions without immediately starting a search
+  - Combine multiple tags with spaces to narrow results
 - Gallery detail view
+  - Copy gallery IDs to the clipboard
+  - Browse thumbnails for every page
+  - Color-coded tags ordered by category and name
+    - Male tags in blue
+    - Female tags in pink
+    - Other tags in gray
 - Two reader view modes
   - **Basic Slide** — reads galleries with vertical scrolling
   - **Book Reading** — displays one page at a time with Japanese and standard page directions
@@ -51,5 +62,3 @@ Rendezvous is an independent, unofficial project and is not affiliated with, end
 This application does not host gallery content. Content is retrieved from third-party services, and users are responsible for complying with applicable laws, terms, and regulations.
 
 ## License
-
-

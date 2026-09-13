@@ -2,11 +2,12 @@ import Foundation
 
 // MARK: - Models
 
-struct GalleryInfo: Decodable, Identifiable {
+nonisolated struct GalleryInfo: Decodable, Identifiable, Sendable {
     let id: String
     let title: String
     let language: String?
     let languageLocalname: String?
+    let tags: [GalleryTag]?
     let files: [GalleryFile]
 
     enum CodingKeys: String, CodingKey {
@@ -14,11 +15,55 @@ struct GalleryInfo: Decodable, Identifiable {
         case title
         case language
         case languageLocalname = "language_localname"
+        case tags
         case files
     }
 }
 
-struct GalleryFile: Decodable {
+// MARK: - ギャラリータグ
+
+nonisolated struct GalleryTag: Decodable, Sendable {
+    nonisolated enum Category: Sendable {
+        case male
+        case female
+        case other
+    }
+
+    let name: String
+    private let male: String?
+    private let female: String?
+
+    var category: Category {
+        if male == "1" {
+            return .male
+        }
+
+        if female == "1" {
+            return .female
+        }
+
+        return .other
+    }
+
+    var displayName: String {
+        switch category {
+        case .male:
+            return "male:\(name)"
+        case .female:
+            return "female:\(name)"
+        case .other:
+            return name
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name = "tag"
+        case male
+        case female
+    }
+}
+
+nonisolated struct GalleryFile: Decodable, Sendable {
     let name: String
     let width: Int
     let height: Int
@@ -36,7 +81,7 @@ struct GalleryFile: Decodable {
 
 // MARK: - Service
 
-struct HitomiGalleryService {
+nonisolated struct HitomiGalleryService {
 
     private let baseURL =
         "https://ltn.gold-usergeneratedcontent.net/galleries"
@@ -94,7 +139,7 @@ struct HitomiGalleryService {
 
 // MARK: - Error
 
-enum GalleryServiceError: Error {
+nonisolated enum GalleryServiceError: Error {
     case invalidURL
     case invalidResponse
     case invalidEncoding

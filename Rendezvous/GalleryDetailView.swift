@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct GalleryDetailView: View {
 
@@ -9,9 +10,7 @@ struct GalleryDetailView: View {
 
     @State private var showReader = false
     @State private var showCellularWarning = false
-
-    private let cellularWarningPageThreshold = 100
-    private let veryLargeGalleryPageThreshold = 1000
+    @State private var didCopyGalleryID = false
 
     var body: some View {
         ScrollView {
@@ -22,6 +21,17 @@ struct GalleryDetailView: View {
                     .font(.title2.bold())
 
                 informationSection
+
+                if !tags.isEmpty {
+                    GalleryTagListView(
+                        title: tagsTitle,
+                        tags: tags
+                    )
+                }
+
+                if !gallery.files.isEmpty {
+                    pageThumbnailsSection
+                }
 
                 Button {
                     handleReadButton()
@@ -38,15 +48,28 @@ struct GalleryDetailView: View {
         .navigationDestination(isPresented: $showReader) {
             GalleryReaderView(gallery: gallery)
         }
-        .alert(cellularWarningTitle, isPresented: $showCellularWarning) {
-            Button(cancelTitle, role: .cancel) {
+        .alert(readerWarning.title, isPresented: $showCellularWarning) {
+            Button(readerWarning.cancelTitle, role: .cancel) {
             }
 
-            Button(continueTitle) {
+            Button(readerWarning.continueTitle) {
                 showReader = true
             }
         } message: {
-            Text(cellularWarningMessage)
+            Text(readerWarning.message)
+        }
+        .task(id: didCopyGalleryID) {
+            guard didCopyGalleryID else {
+                return
+            }
+
+            try? await Task.sleep(for: .seconds(1.5))
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            didCopyGalleryID = false
         }
     }
 
@@ -71,7 +94,7 @@ struct GalleryDetailView: View {
 
     private var informationSection: some View {
         VStack(spacing: 0) {
-            infoRow(title: "ID", value: gallery.id)
+            galleryIDRow
 
             Divider()
 
@@ -94,6 +117,38 @@ struct GalleryDetailView: View {
         }
     }
 
+    private var galleryIDRow: some View {
+        HStack {
+            Text("ID")
+                .foregroundStyle(.secondary)
+
+            Spacer()
+
+            Text(gallery.id)
+                .monospacedDigit()
+
+            Button {
+                UIPasteboard.general.string = gallery.id
+                didCopyGalleryID = true
+            } label: {
+                Image(
+                    systemName: didCopyGalleryID
+                        ? "checkmark"
+                        : "doc.on.doc"
+                )
+                .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(didCopyGalleryID ? .green : .accentColor)
+            .accessibilityLabel(
+                didCopyGalleryID
+                    ? galleryIDCopiedTitle
+                    : copyGalleryIDTitle
+            )
+        }
+        .padding(.vertical, 8)
+    }
+
     private func infoRow(title: String, value: String) -> some View {
         HStack {
             Text(title)
@@ -107,13 +162,69 @@ struct GalleryDetailView: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - タグ
+
+    private var tags: [GalleryTag] {
+        gallery.tags ?? []
+    }
+
+    // MARK: - ページサムネイル
+
+    private var pageThumbnailsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(pageThumbnailsTitle)
+                .font(.headline)
+
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: 10),
+                    count: 3
+                ),
+                spacing: 10
+            ) {
+                ForEach(
+                    Array(gallery.files.prefix(9).enumerated()),
+                    id: \.offset
+                ) { index, file in
+                    HitomiThumbnailView(
+                        hash: file.hash,
+                        kind: .page,
+                        width: nil,
+                        height: 145
+                    )
+                    .overlay(alignment: .bottomTrailing) {
+                        Text("\(index + 1)")
+                            .font(.caption2.bold().monospacedDigit())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.68), in: Capsule())
+                            .padding(6)
+                    }
+                    .accessibilityLabel(
+                        pageThumbnailAccessibilityLabel(index + 1)
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Reader Navigation
+
+    private var readerWarning: GalleryReaderWarning {
+        GalleryReaderWarning(
+            pageCount: gallery.files.count,
+            language: settings.galleryLanguage,
+            preloadAllImages: settings.preloadAllReaderImages
+        )
+    }
 
     // モバイル通信かつページ数が多い場合だけ警告を表示する
     private func handleReadButton() {
         let shouldWarn =
             networkMonitor.connectionType == .cellular &&
-            gallery.files.count >= cellularWarningPageThreshold
+            gallery.files.count >= GalleryReaderWarning.pageThreshold
 
         if shouldWarn {
             showCellularWarning = true
@@ -157,96 +268,59 @@ struct GalleryDetailView: View {
         }
     }
 
-    private var cellularWarningTitle: String {
-        let isVeryLarge = gallery.files.count >= veryLargeGalleryPageThreshold
-
+    private var tagsTitle: String {
         switch settings.galleryLanguage {
         case .english:
-            return isVeryLarge ? "Very Large Gallery" : "Mobile Data Warning"
+            return "Tags"
         case .japanese:
-            return isVeryLarge ? "非常に大きな作品です" : "モバイルデータ通信に注意"
+            return "タグ"
         case .korean:
-            return isVeryLarge ? "매우 큰 작품입니다" : "모바일 데이터 사용 주의"
+            return "태그"
         }
     }
 
-    private var cellularWarningMessage: String {
-        let pages = gallery.files.count
-        let isVeryLarge = pages >= veryLargeGalleryPageThreshold
-
+    private var pageThumbnailsTitle: String {
         switch settings.galleryLanguage {
-
         case .english:
-            if isVeryLarge {
-                return """
-                This gallery has \(pages) pages. Mobile data usage may be very high. Wi‑Fi is recommended when possible.
-                """
-            }
-
-            if settings.preloadAllReaderImages {
-                return """
-                This gallery has \(pages) pages. Smooth Reading Mode is enabled, so all images will be preloaded in the background and may use a significant amount of mobile data.
-                """
-            }
-
-            return """
-            This gallery has \(pages) pages. Reading it over a cellular connection may use a significant amount of mobile data.
-            """
-
+            return "Page Thumbnails"
         case .japanese:
-            if isVeryLarge {
-                return """
-                この作品は\(pages)ページあります。モバイルデータ通信量が非常に多くなる可能性があります。可能であればWi‑Fi環境での利用をおすすめします。
-                """
-            }
-
-            if settings.preloadAllReaderImages {
-                return """
-                この作品は\(pages)ページあります。現在は快適モードが有効なため、すべての画像をバックグラウンドで事前に読み込みます。モバイルデータ通信量が多くなる可能性があります。
-                """
-            }
-
-            return """
-            この作品は\(pages)ページあります。モバイル通信で閲覧すると、データ通信量が多くなる可能性があります。
-            """
+            return "ページサムネイル"
         case .korean:
-            if isVeryLarge {
-                return """
-                이 작품은 \(pages)페이지입니다. 모바일 데이터 사용량이 매우 많을 수 있습니다. 가능하면 Wi‑Fi 환경에서 이용하는 것을 권장합니다.
-                """
-            }
-
-            if settings.preloadAllReaderImages {
-                return """
-                이 작품은 \(pages)페이지입니다. 현재 쾌적 모드가 켜져 있어 모든 이미지를 백그라운드에서 미리 불러옵니다. 모바일 데이터를 많이 사용할 수 있습니다.
-                """
-            }
-
-            return """
-            이 작품은 \(pages)페이지입니다. 모바일 데이터로 읽을 경우 데이터 사용량이 많아질 수 있습니다.
-            """
+            return "페이지 미리보기"
         }
     }
 
-    private var cancelTitle: String {
+    private func pageThumbnailAccessibilityLabel(_ page: Int) -> String {
         switch settings.galleryLanguage {
         case .english:
-            return "Cancel"
+            return "Page \(page) thumbnail"
         case .japanese:
-            return "キャンセル"
+            return "\(page)ページ目のサムネイル"
         case .korean:
-            return "취소"
+            return "\(page)페이지 미리보기"
         }
     }
 
-    private var continueTitle: String {
+    private var copyGalleryIDTitle: String {
         switch settings.galleryLanguage {
         case .english:
-            return "Continue"
+            return "Copy Gallery ID"
         case .japanese:
-            return "続けて読む"
+            return "作品IDをコピー"
         case .korean:
-            return "계속 읽기"
+            return "작품 ID 복사"
         }
     }
+
+    private var galleryIDCopiedTitle: String {
+        switch settings.galleryLanguage {
+        case .english:
+            return "Gallery ID Copied"
+        case .japanese:
+            return "作品IDをコピーしました"
+        case .korean:
+            return "작품 ID를 복사했습니다"
+        }
+    }
+
 }

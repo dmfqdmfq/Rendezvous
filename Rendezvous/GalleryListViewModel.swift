@@ -8,12 +8,15 @@ final class GalleryListViewModel: ObservableObject {
     @Published private(set) var isLoading = true
     @Published private(set) var isLoadingMore = false
     @Published private(set) var hasMorePages = true
+    @Published private(set) var submittedSearchQuery: String?
     @Published var errorMessage: String?
 
     private let indexService = HitomiIndexService()
     private let galleryService = HitomiGalleryService()
+    private let searchService = HitomiSearchService()
 
     private var currentLanguage: GalleryLanguage?
+    private var searchResultIDs: [Int]?
     private var nextPage = 1
     private var currentLoadID = UUID()
     private var loadMoreTask: Task<Void, Never>?
@@ -24,7 +27,29 @@ final class GalleryListViewModel: ObservableObject {
     // 次ページを先読みし始める残り件数
     private let preloadDistance = 10
 
+    private let pageSize = 25
+
+    var isSearchActive: Bool {
+        submittedSearchQuery != nil
+    }
+
+    var availableTags: [GalleryTag] {
+        galleries.flatMap { $0.tags ?? [] }
+    }
+
     // MARK: - Initial Load
+
+    // 言語変更時は現在の検索条件を保ったまま一覧を読み直す
+    func reload(language: GalleryLanguage) async {
+        if let submittedSearchQuery {
+            await search(
+                query: submittedSearchQuery,
+                language: language
+            )
+        } else {
+            await load(language: language)
+        }
+    }
 
     // 初回起動時や言語変更時に一覧を最初から読み込む
     func load(language: GalleryLanguage, page: Int = 1) async {
@@ -35,6 +60,8 @@ final class GalleryListViewModel: ObservableObject {
 
         currentLoadID = loadID
         currentLanguage = language
+        submittedSearchQuery = nil
+        searchResultIDs = nil
         nextPage = page
         hasMorePages = true
 
@@ -62,7 +89,7 @@ final class GalleryListViewModel: ObservableObject {
 
             galleries = newGalleries
             nextPage = page + 1
-            hasMorePages = newGalleries.count >= 25
+            hasMorePages = newGalleries.count >= pageSize
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
@@ -76,10 +103,104 @@ final class GalleryListViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 検索
+
+    // 数字だけなら作品ID、それ以外はタイトルとタグ条件として検索する
+    func search(query: String, language: GalleryLanguage) async {
+        let normalizedQuery = query.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+
+        guard !normalizedQuery.isEmpty else {
+            await load(language: language)
+            return
+        }
+
+        loadMoreTask?.cancel()
+        loadMoreTask = nil
+
+        let loadID = UUID()
+
+        currentLoadID = loadID
+        currentLanguage = language
+        submittedSearchQuery = normalizedQuery
+        searchResultIDs = []
+        nextPage = 1
+        hasMorePages = false
+
+        galleries.removeAll()
+        errorMessage = nil
+        isLoading = true
+        isLoadingMore = false
+
+        defer {
+            if currentLoadID == loadID {
+                isLoading = false
+            }
+        }
+
+        do {
+            let ids: [Int]
+
+            if normalizedQuery.allSatisfy(\.isNumber) {
+                if let galleryID = Int(normalizedQuery) {
+                    ids = [galleryID]
+                } else {
+                    ids = []
+                }
+            } else {
+                ids = try await searchService.galleryIDs(
+                    matching: normalizedQuery,
+                    language: language
+                )
+            }
+
+            guard currentLoadID == loadID else {
+                return
+            }
+
+            searchResultIDs = ids
+            let firstPageIDs = Array(ids.prefix(pageSize))
+            let searchGalleries = try await fetchGalleries(
+                ids: firstPageIDs,
+                loadID: loadID
+            )
+
+            guard currentLoadID == loadID else {
+                return
+            }
+
+            galleries = searchGalleries
+            nextPage = 2
+            hasMorePages = ids.count > pageSize
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
+        } catch {
+            guard currentLoadID == loadID else {
+                return
+            }
+
+#if DEBUG
+            print("[GalleryList] Search ERROR:", error)
+#endif
+            errorMessage = searchErrorMessage(for: language)
+        }
+    }
+
     // MARK: - Refresh
 
     // 現在の一覧を表示したまま1ページ目だけ最新状態へ更新する
     func refresh(language: GalleryLanguage) async {
+        if let submittedSearchQuery {
+            await search(
+                query: submittedSearchQuery,
+                language: language
+            )
+            return
+        }
+
         loadMoreTask?.cancel()
         loadMoreTask = nil
         isLoadingMore = false
@@ -104,7 +225,7 @@ final class GalleryListViewModel: ObservableObject {
 
             galleries = refreshedGalleries
             nextPage = 2
-            hasMorePages = refreshedGalleries.count >= 25
+            hasMorePages = refreshedGalleries.count >= pageSize
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
@@ -198,9 +319,10 @@ final class GalleryListViewModel: ObservableObject {
             galleries.append(contentsOf: uniqueGalleries)
             nextPage = page + 1
 
-            if newGalleries.count < 25 {
-                hasMorePages = false
-            }
+            hasMorePages = hasPage(
+                after: page,
+                loadedCount: newGalleries.count
+            )
         } catch is CancellationError {
             return
         } catch let error as URLError where error.code == .cancelled {
@@ -220,14 +342,36 @@ final class GalleryListViewModel: ObservableObject {
         page: Int,
         loadID: UUID
     ) async throws -> [GalleryInfo] {
-        let ids = try await indexService.fetchGalleryIDs(
-            language: language,
-            page: page
-        )
+        let ids: [Int]
+
+        if let searchResultIDs {
+            let startIndex = (page - 1) * pageSize
+
+            guard startIndex < searchResultIDs.count else {
+                return []
+            }
+
+            let endIndex = min(startIndex + pageSize, searchResultIDs.count)
+            ids = Array(searchResultIDs[startIndex..<endIndex])
+        } else {
+            ids = try await indexService.fetchGalleryIDs(
+                language: language,
+                page: page
+            )
+        }
 
         guard currentLoadID == loadID else {
             throw CancellationError()
         }
+
+        return try await fetchGalleries(ids: ids, loadID: loadID)
+    }
+
+    // 指定したIDのメタデータを最大6件ずつ並列取得し、元の並び順を維持する
+    private func fetchGalleries(
+        ids: [Int],
+        loadID: UUID
+    ) async throws -> [GalleryInfo] {
 
         var results: [(index: Int, gallery: GalleryInfo)] = []
         results.reserveCapacity(ids.count)
@@ -273,6 +417,25 @@ final class GalleryListViewModel: ObservableObject {
         return results
             .sorted { $0.index < $1.index }
             .map(\.gallery)
+    }
+
+    private func hasPage(after page: Int, loadedCount: Int) -> Bool {
+        guard let searchResultIDs else {
+            return loadedCount >= pageSize
+        }
+
+        return page * pageSize < searchResultIDs.count
+    }
+
+    private func searchErrorMessage(for language: GalleryLanguage) -> String {
+        switch language {
+        case .english:
+            return "Could not load the search results."
+        case .japanese:
+            return "検索結果を読み込めませんでした。"
+        case .korean:
+            return "검색 결과를 불러오지 못했습니다."
+        }
     }
 
     // ギャラリー1件を取得するTaskをグループへ追加する
