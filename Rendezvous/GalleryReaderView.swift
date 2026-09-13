@@ -19,6 +19,7 @@ struct GalleryReaderView: View {
     private var bookReadingDirectionRawValue = BookReadingDirection.japanese.rawValue
 
     let gallery: GalleryInfo
+    let localPagesDirectory: URL?
 
     @State private var resolver = HitomiImageResolver()
     @State private var cache = ReaderImageCache()
@@ -28,6 +29,14 @@ struct GalleryReaderView: View {
     @State private var currentPage = 1
     @State private var currentPageID: Int?
     @State private var loadedHashes: Set<String> = []
+
+    init(
+        gallery: GalleryInfo,
+        localPagesDirectory: URL? = nil
+    ) {
+        self.gallery = gallery
+        self.localPagesDirectory = localPagesDirectory
+    }
 
     var body: some View {
         Group {
@@ -86,7 +95,8 @@ struct GalleryReaderView: View {
             .padding(.vertical, 10)
 
             // 快適モードの場合だけ全ページの事前読み込み進捗を表示する
-            if settings.preloadAllReaderImages {
+            if settings.preloadAllReaderImages,
+               localPagesDirectory == nil {
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         Rectangle()
@@ -170,7 +180,8 @@ struct GalleryReaderView: View {
                         file: file,
                         resolver: resolver,
                         cache: cache,
-                        preloadEnabled: settings.preloadAllReaderImages
+                        preloadEnabled: settings.preloadAllReaderImages,
+                        localPageURL: localPageURL(at: index)
                     ) {
                         markLoaded(file.hash)
                     }
@@ -207,7 +218,8 @@ struct GalleryReaderView: View {
                         file: page,
                         resolver: resolver,
                         cache: cache,
-                        preloadEnabled: settings.preloadAllReaderImages
+                        preloadEnabled: settings.preloadAllReaderImages,
+                        localPageURL: localPageURL(at: currentPage - 1)
                     ) {
                         markLoaded(page.hash)
                     }
@@ -264,6 +276,22 @@ struct GalleryReaderView: View {
         }
 
         return gallery.files[index]
+    }
+
+    // ダウンロード時と同じ連番形式からローカルページのURLを生成する
+    private func localPageURL(at index: Int) -> URL? {
+        guard let localPagesDirectory else {
+            return nil
+        }
+
+        let numberWidth = max(4, String(gallery.files.count).count)
+        let fileName = String(
+            format: "%0*d.avif",
+            numberWidth,
+            index + 1
+        )
+
+        return localPagesDirectory.appendingPathComponent(fileName)
     }
 
     // 本読みモードの左右タップをページ送りへ変換する
@@ -353,6 +381,11 @@ struct GalleryReaderView: View {
 
     // Readerを先に表示し、必要な場合は全ページの事前読み込みを並行して続ける
     private func prepareReader() async {
+        if localPagesDirectory != nil {
+            isReady = true
+            return
+        }
+
         do {
             try await resolver.initialize()
 
@@ -485,6 +518,7 @@ private struct ReaderPageView: View {
     let resolver: HitomiImageResolver
     let cache: ReaderImageCache
     let preloadEnabled: Bool
+    let localPageURL: URL?
     let onLoaded: () -> Void
 
     @State private var image: UIImage?
@@ -560,7 +594,7 @@ private struct ReaderPageView: View {
 
                 displayImage(
                     from: data,
-                    source: preloadEnabled ? "SHARED LOAD" : "NETWORK"
+                    source: imageSourceDescription
                 )
                 return
             } catch is CancellationError {
@@ -593,12 +627,35 @@ private struct ReaderPageView: View {
         }
     }
 
-    // 通常表示と事前読み込みの両方で同じ404復旧処理と共有キャッシュを使用する
+    // ローカルファイルを優先し、通常表示では共有キャッシュと404復旧処理を使う
     private func fetchImageData() async throws -> Data {
-        try await resolver.imageData(
+        if let localPageURL {
+            let data = try await Task.detached(
+                priority: .userInitiated
+            ) {
+                try Task.checkCancellation()
+                return try Data(
+                    contentsOf: localPageURL,
+                    options: .mappedIfSafe
+                )
+            }.value
+
+            await cache.store(data, for: file.hash)
+            return data
+        }
+
+        return try await resolver.imageData(
             for: file.hash,
             cache: cache
         )
+    }
+
+    private var imageSourceDescription: String {
+        if localPageURL != nil {
+            return "LOCAL"
+        }
+
+        return preloadEnabled ? "SHARED LOAD" : "NETWORK"
     }
 
     // 一時的な通信障害だけを自動再試行する

@@ -34,6 +34,11 @@ actor ReaderImageCache {
         storage[hash] = data
     }
 
+    // 保存済みデータを1件だけ削除する
+    func removeData(for hash: String) {
+        storage[hash] = nil
+    }
+
     // 同じ画像の重複ダウンロードを防ぎながらデータを取得する
     func loadData(for hash: String, request: URLRequest) async throws -> Data {
         if let cachedData = storage[hash] {

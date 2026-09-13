@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Models
 
-nonisolated struct GalleryInfo: Decodable, Identifiable, Sendable {
+nonisolated struct GalleryInfo: Codable, Identifiable, Sendable {
     let id: String
     let title: String
     let language: String?
@@ -22,7 +22,7 @@ nonisolated struct GalleryInfo: Decodable, Identifiable, Sendable {
 
 // MARK: - ギャラリータグ
 
-nonisolated struct GalleryTag: Decodable, Sendable {
+nonisolated struct GalleryTag: Codable, Sendable {
     nonisolated enum Category: Sendable {
         case male
         case female
@@ -63,7 +63,7 @@ nonisolated struct GalleryTag: Decodable, Sendable {
     }
 }
 
-nonisolated struct GalleryFile: Decodable, Sendable {
+nonisolated struct GalleryFile: Codable, Sendable {
     let name: String
     let width: Int
     let height: Int

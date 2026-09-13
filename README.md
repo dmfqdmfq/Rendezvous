@@ -17,6 +17,11 @@ A native iOS client for browsing and reading content from Hitomi.la.
 - Search by title, tag, or exact gallery ID
   - Add color-coded tag suggestions without immediately starting a search
   - Combine multiple tags with spaces to narrow results
+- Save favorite galleries and browse them from a favorites-only list
+- Download galleries into the app's Documents directory
+  - Read completed downloads in the app without loading images from the network
+  - Monitor, cancel, retry, or delete downloads from the Downloads screen
+  - Access saved files in Files > On My iPhone > Rendezvous > Downloads
 - Gallery detail view
   - Copy gallery IDs to the clipboard
   - Browse thumbnails for every page
