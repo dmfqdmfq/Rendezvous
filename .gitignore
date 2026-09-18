@@ -10,6 +10,7 @@ xcuserdata/
 # Xcode build data
 DerivedData/
 build/
+dist/
 
 # Swift Package Manager user data
 .swiftpm/xcode/package.xcworkspace/xcuserdata/

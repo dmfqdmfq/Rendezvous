@@ -48,12 +48,39 @@ A native iOS client for browsing and reading content from Hitomi.la.
 Screenshots will be added before the first release.
 
 ## Installation
-(Prebuilt IPA files are currently not available.)
+
+### Xcode
 
 1. Clone this repository.
 2. Open the Xcode project.
 3. Select your signing team.
 4. Build and run on an iPhone or iOS Simulator.
+
+### Unsigned IPA
+
+Release assets named `Rendezvous-<version>-unsigned.ipa` are unsigned device builds for third-party installers that perform their own code signing. They cannot be installed directly and do not bypass Apple's signing requirements. The installer and Apple account used for re-signing determine installation and expiration limits. The device must support the app's current iOS deployment target.
+
+Build and audit the same package locally:
+
+```bash
+./scripts/build-unsigned-ipa.sh dist
+./scripts/verify-ipa.sh dist/Rendezvous-0.1.0-unsigned.ipa
+```
+
+The audit extracts the IPA and fails if it finds signing or provisioning data, Xcode project/source files, build-machine paths, Xcode metadata, simulator code, or an encrypted executable. It also verifies that a temporary copy can be re-signed. The generated checksum is stored next to the IPA.
+
+## Automated Releases
+
+The `Build Unsigned IPA` GitHub Actions workflow runs manually from the Actions tab or automatically for tags beginning with `v`. A manual run produces a downloadable workflow artifact. A matching version tag additionally creates a GitHub Release containing the IPA, SHA-256 checksum, and verification report.
+
+For example, after changing `MARKETING_VERSION` to `0.2.0` and committing it:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag version must match `MARKETING_VERSION`; otherwise the workflow stops before publishing. No Apple certificate, provisioning profile, paid developer membership, or custom GitHub secret is required for the unsigned build. GitHub also generates a provenance attestation for the IPA.
 
 ## Notes
 

@@ -1,0 +1,102 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: unsigned-ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Build unsigned IPA
+        id: package
+        shell: bash
+        run: |
+          ./scripts/build-unsigned-ipa.sh dist
+
+          ipa_path="$(find dist -maxdepth 1 -type f -name 'Rendezvous-*-unsigned.ipa' -print -quit)"
+          if [[ -z "$ipa_path" ]]; then
+            echo "IPA output was not found." >&2
+            exit 1
+          fi
+
+          report_path="${ipa_path%.ipa}-verification.txt"
+          echo "ipa_path=$ipa_path" >> "$GITHUB_OUTPUT"
+          echo "report_path=$report_path" >> "$GITHUB_OUTPUT"
+
+      - name: Unpack and verify IPA
+        shell: bash
+        run: |
+          ./scripts/verify-ipa.sh "${{ steps.package.outputs.ipa_path }}" \
+            | tee "${{ steps.package.outputs.report_path }}"
+
+      - name: Match tag to app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          expected_name="Rendezvous-${GITHUB_REF_NAME#v}-unsigned.ipa"
+          actual_name="$(basename "${{ steps.package.outputs.ipa_path }}")"
+
+          if [[ "$actual_name" != "$expected_name" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match $actual_name." >&2
+            exit 1
+          fi
+
+      - name: Attest IPA provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.package.outputs.ipa_path }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rendezvous-unsigned-ipa
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IPA_PATH: ${{ steps.package.outputs.ipa_path }}
+          REPORT_PATH: ${{ steps.package.outputs.report_path }}
+        shell: bash
+        run: |
+          checksum_path="$IPA_PATH.sha256"
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "$IPA_PATH" \
+              "$checksum_path" \
+              "$REPORT_PATH" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "$IPA_PATH#Unsigned IPA — requires re-signing" \
+              "$checksum_path#SHA-256 checksum" \
+              "$REPORT_PATH#IPA verification report" \
+              --verify-tag \
+              --generate-notes \
+              --title "Rendezvous $GITHUB_REF_NAME"
+          fi
